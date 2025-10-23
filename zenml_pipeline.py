@@ -11,28 +11,78 @@ def prepare_data(source_dir: str):
     # 检查是否存在 process.py
     process_file = os.path.join(source_dir, "process.py")
     if os.path.exists(process_file):
-        print("🔍 发现 process.py，调用自定义数据处理函数")
+        print("🔍 发现 process.py，调用 preprocess_data.sh 脚本")
         try:
-            # 动态导入 process.py
-            sys.path.insert(0, source_dir)
-            import process
+            # 获取当前脚本所在目录
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            preprocess_script = os.path.join(current_dir, "preprocess_data.sh")
             
-            # 调用 process_data 函数
-            result = process.process_data(source_dir)
-            if isinstance(result, tuple) and len(result) == 2:
-                dataset_dir, dataset_eval_dir = result
-                print(f"📁 训练数据目录: {dataset_dir}")
-                print(f"📁 评估数据目录: {dataset_eval_dir}")
-                return dataset_dir, dataset_eval_dir
-            else:
-                raise ValueError("process_data 函数必须返回包含两个元素的元组")
+            # 检查 preprocess_data.sh 是否存在
+            if not os.path.exists(preprocess_script):
+                raise FileNotFoundError(f"preprocess_data.sh 脚本不存在: {preprocess_script}")
+            
+            # 确保脚本有执行权限
+            os.chmod(preprocess_script, 0o755)
+            
+            # 调用 preprocess_data.sh 脚本
+            cmd = ["bash", preprocess_script, source_dir]
+            print(f"🚀 执行命令: {' '.join(cmd)}")
+            
+            # 使用 Popen 来实时显示输出，同时捕获输出
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                     text=True, bufsize=1, universal_newlines=True)
+            
+            output_lines = []
+            print("📋 数据处理输出:")
+            print("-" * 50)
+            
+            # 实时读取并显示输出
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    print(line.rstrip())  # 实时显示输出
+                    output_lines.append(line.rstrip())  # 保存到列表
+            
+            # 等待进程完成
+            return_code = process.wait()
+            
+            print("-" * 50)
+            
+            if return_code != 0:
+                print(f"❌ 数据处理失败，返回码: {return_code}")
+                raise RuntimeError("数据处理失败")
+            
+            # 从输出中提取目录路径
+            # 查找 "✅ 数据预处理完成" 这一行，然后取前两行作为目录路径
+            dataset_dir = None
+            dataset_eval_dir = None
+            
+            # 从后往前查找 "✅ 数据预处理完成" 这一行
+            completion_line_index = -1
+            for i in range(len(output_lines) - 1, -1, -1):
+                if "✅ 数据预处理完成" in output_lines[i]:
+                    completion_line_index = i
+                    break
+            
+            if completion_line_index >= 2:
+                # 取前两行作为目录路径
+                dataset_eval_dir = output_lines[completion_line_index - 1].strip()
+                dataset_dir = output_lines[completion_line_index - 2].strip()
+                dataset_eval_dir = dataset_eval_dir.replace("/data", source_dir)
+                dataset_dir = dataset_dir.replace("/data", source_dir)
+            
+            # 如果无法从输出中提取路径，使用默认路径
+            if dataset_dir is None or dataset_eval_dir is None:
+                print("⚠️  无法从输出中提取目录路径，使用默认路径")
+                dataset_dir = os.path.join(source_dir, "processed_train")
+                dataset_eval_dir = os.path.join(source_dir, "processed_eval")
+                
+            print(f"📁 训练数据目录: {dataset_dir}")
+            print(f"📁 评估数据目录: {dataset_eval_dir}")
+            return dataset_dir, dataset_eval_dir
+            
         except Exception as e:
-            print(f"❌ 调用 process.py 失败: {e}")
+            print(f"❌ 调用 preprocess_data.sh 失败: {e}")
             raise
-        finally:
-            # 清理 sys.path
-            if source_dir in sys.path:
-                sys.path.remove(source_dir)
     else:
         print("📂 未发现 process.py，使用默认目录结构")
         # 默认使用 source_dir/train 和 source_dir/eval
@@ -81,17 +131,31 @@ def train_model(dataset_dirs: tuple, training_script: str, training_env: str = N
         cmd = ["bash", training_script]
     
     print(f"🚀 执行命令: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     
+    # 使用 Popen 来实时显示输出，同时捕获最后一行
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                             text=True, env=env, bufsize=1, universal_newlines=True)
+    
+    output_lines = []
     print("📋 训练输出:")
-    print(result.stdout)
-    if result.returncode != 0:
-        print("❌ 训练错误:")
-        print(result.stderr)
+    print("-" * 50)
+    
+    # 实时读取并显示输出
+    for line in iter(process.stdout.readline, ''):
+        if line:
+            print(line.rstrip())  # 实时显示输出
+            output_lines.append(line.rstrip())  # 保存到列表
+    
+    # 等待进程完成
+    return_code = process.wait()
+    
+    print("-" * 50)
+    
+    if return_code != 0:
+        print("❌ 训练失败，返回码:", return_code)
         raise RuntimeError("训练失败")
     
-    # 假设训练脚本输出 output_dir 到 stdout 的最后一行，或者使用默认路径
-    output_lines = result.stdout.strip().split('\n')
+    # 从输出中提取最后一行作为输出目录
     if output_lines and output_lines[-1].strip():
         # 尝试从最后一行获取输出目录
         potential_output = output_lines[-1].strip()
