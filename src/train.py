@@ -77,7 +77,7 @@ def compute_loss(outputs,
                 num_items_in_batch,
             ):
     logits = outputs.logits
-    loss = torch.nn.functional.cross_entropy(logits, labels)
+    loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.shape[-1]), labels.view(-1),ignore_index=-100)
     return loss
 def main():
     # 初始化 Accelerator
