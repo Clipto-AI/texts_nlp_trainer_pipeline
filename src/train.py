@@ -75,10 +75,90 @@ def data_collator(examples,eos_token_id,pad_token_id,total_max_length):
 def compute_loss(outputs,
                 labels,
                 num_items_in_batch,
+                eos_token_id=None,
             ):
-    logits = outputs.logits
-    loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.shape[-1]), labels.view(-1),ignore_index=-100)
+    logits = outputs.logits  # shape: (B, T, V)
+    B, T, V = logits.shape
+    
+    if eos_token_id is None:
+        eos_token_id = 2  # 默认值，如果未提供
+    
+    # 向量化计算每个样本的第一个非-100位置
+    non_neg_100_mask = labels != -100  # (B, T)
+    valid_label_start_index = torch.argmax(non_neg_100_mask.int(), dim=1)  # (B,)
+    
+    # 处理全为-100的样本
+    all_neg_100_mask = ~non_neg_100_mask.any(dim=1)  # (B,)
+    valid_label_start_index[all_neg_100_mask] = T  # 设置为序列长度，表示无效
+    
+    # 向量化计算每个样本的第一个eos_token_id位置
+    eos_mask = labels == eos_token_id  # (B, T)
+    eos_positions = torch.argmax(eos_mask.int(), dim=1)  # (B,)
+    
+    # 处理没有eos_token_id的样本
+    no_eos_mask = ~eos_mask.any(dim=1)  # (B,)
+    eos_positions[no_eos_mask] = T  # 设置为序列长度
+    
+    # 计算有效长度
+    valid_length = eos_positions - valid_label_start_index + 1  # (B,)
+    valid_length = torch.clamp(valid_length, min=0)  # 确保非负
+    
+    # 处理无效样本
+    valid_length[all_neg_100_mask] = 0
+    
+    # 创建位置索引张量 (B, T)
+    position_indices = torch.arange(T, device=logits.device).unsqueeze(0).expand(B, -1)  # (B, T)
+    
+    # 创建有效位置掩码
+    valid_positions = (position_indices >= valid_label_start_index.unsqueeze(1)) & \
+                     (position_indices < valid_label_start_index.unsqueeze(1) + valid_length.unsqueeze(1)) & \
+                     (labels != -100)  # (B, T)
+    
+    # 计算相对位置
+    relative_positions = position_indices - valid_label_start_index.unsqueeze(1)  # (B, T)
+    
+    # 向量化计算余弦权重
+    # 对于每个样本，计算 cos(pi * relative_pos / (2 * valid_length)) + 1
+    valid_length_expanded = valid_length.unsqueeze(1)  # (B, 1)
+    valid_length_expanded = torch.clamp(valid_length_expanded, min=1)  # 避免除零
+    
+    # 计算余弦权重
+    cosine_weights = torch.cos(torch.pi * relative_positions / (2 * valid_length_expanded)) + 1.0  # (B, T)
+    
+    # 处理最后一个有效位置（权重为2）
+    last_valid_positions = (relative_positions == valid_length_expanded - 1) & valid_positions  # (B, T)
+    cosine_weights[last_valid_positions] = 2.0
+    
+    # 创建最终权重张量
+    weights = torch.zeros_like(labels, dtype=torch.float32)  # (B, T)
+    weights[valid_positions] = cosine_weights[valid_positions]
+    
+    # 计算交叉熵损失（reduction='none'）
+    ce_loss = torch.nn.functional.cross_entropy(
+        logits.view(-1, V), 
+        labels.view(-1), 
+        ignore_index=-100, 
+        reduction='none'
+    ).view(B, T)
+    
+    # 应用权重
+    weighted_loss = ce_loss * weights
+    
+    # 计算有效位置的平均损失
+    valid_mask = weights > 0
+    if valid_mask.any():
+        loss = weighted_loss[valid_mask].mean()
+    else:
+        loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
     return loss
+
+def create_compute_loss_func(eos_token_id):
+    """创建带有eos_token_id的compute_loss函数"""
+    def compute_loss_with_eos(outputs, labels, num_items_in_batch):
+        return compute_loss(outputs, labels, num_items_in_batch, eos_token_id)
+    return compute_loss_with_eos
+
 def main():
     # 初始化 Accelerator
     accelerator = Accelerator()
@@ -227,7 +307,7 @@ def main():
         train_dataset=tokenized_ds,
         eval_dataset=tokenized_ds_eval,
         data_collator=partial(data_collator,eos_token_id=tokenizer.eos_token_id,pad_token_id=tokenizer.pad_token_id,total_max_length=args.total_max_length),
-        compute_loss_func=compute_loss,
+        compute_loss_func=create_compute_loss_func(tokenizer.eos_token_id),
 
     )
     print(trainer)
