@@ -1,0 +1,25 @@
+DEEPSPEED_CONFIG_FILE=deepspeed_config_zero2.json
+# --- Weights & Biases ---
+WANDB_API_KEY=d2e313b0804ea6b3f3272dcfd0f331b044b565a4
+WANDB_PROJECT=ft0
+WANDB_RUN_NAME=ft0-run-0
+
+# --- Accelerate 配置 ---
+ACCELERATE_DISABLE_DEFAULT_CONFIG=1
+
+# --- 模型与数据 ---
+MODEL_NAME=/data/models/Qwen3-1.7B/
+DATASET_DIR=/data/data/qwen_summary/train/
+DATASET_EVAL_DIR=/data/data/qwen_summary/eval/
+
+# --- 训练参数 ---
+EPOCHS=3
+LORA_INIT_METHOD=True
+BATCH_SIZE=4
+TOTAL_MAX_LENGTH=12
+SAVE_STEPS=1000
+EVAL_STEPS=1000
+OUTPUT_DIR=/data/output/qwen_summary/lora_ft/
+LEARNING_RATE=3e-4
+LORA_RANK=32
+SAVE_TOTAL_LIMIT=20

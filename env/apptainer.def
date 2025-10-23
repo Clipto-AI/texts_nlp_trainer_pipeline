@@ -1,0 +1,12 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.9.0-cuda12.8-cudnn9-devel
+
+%post
+    apt-get update && apt-get install -y git vim wget
+    pip install --upgrade pip
+    pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+    pip install transformers deepspeed bitsandbytes wandb einops accelerate peft datasets
+%environment
+    export PYTHONUNBUFFERED=1
+    export CUDA_HOME=/usr/local/cuda
+    export PATH=$CUDA_HOME/bin:$PATH
