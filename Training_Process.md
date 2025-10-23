@@ -13,6 +13,55 @@
 - **`src/train.py`**: 实际训练逻辑
 - **`default_config.yaml`**: Accelerate 配置文件
 
+### 容器化数据处理架构
+
+```mermaid
+graph TB
+    subgraph "主机环境"
+        A[ZenML Pipeline]
+        B[preprocess_data.sh]
+        C[env/apptainer.sif]
+    end
+    
+    subgraph "Apptainer 容器"
+        D[zenml_preprocess.py]
+        E[process.py]
+        F[处理后的数据目录]
+    end
+    
+    subgraph "数据目录"
+        G[source_dir/train]
+        H[source_dir/eval]
+        I[source_dir/process.py]
+    end
+    
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    I --> E
+    G --> F
+    H --> F
+    F --> A
+    
+    style A fill:#e3f2fd
+    style C fill:#f3e5f5
+    style D fill:#e8f5e8
+    style E fill:#fff3e0
+    style F fill:#ffebee
+```
+
+### 文件映射关系
+
+| 主机路径 | 容器内路径 | 说明 |
+|---------|-----------|------|
+| `source_dir/` | `/data/` | 数据源目录挂载点 |
+| `source_dir/process.py` | `/data/process.py` | 自定义处理脚本 |
+| `source_dir/train/` | `/data/train/` | 训练数据目录 |
+| `source_dir/eval/` | `/data/eval/` | 评估数据目录 |
+| `source_dir/processed_*/` | `/data/processed_*/` | 处理后的数据目录 |
+
 ## 🚀 快速开始
 
 ### 完整训练流程
@@ -113,22 +162,85 @@ WANDB_RUN_NAME=ft0-run-0
 
 ## 🔄 训练流程
 
-### 1. 数据准备阶段 (`prepare_data`)
+### 处理流程图
+
+```mermaid
+graph TD
+    A[开始训练] --> B[检查 source_dir 下是否存在 process.py]
+    B -->|存在| C[调用 preprocess_data.sh]
+    B -->|不存在| D[使用默认目录结构]
+    
+    C --> E[使用 Apptainer 运行容器]
+    E --> F[在容器内执行 zenml_preprocess.py]
+    F --> G[导入并调用 process.py 中的 process_data 函数]
+    G --> H[处理数据并输出目录路径]
+    H --> I[将容器内路径映射到主机路径]
+    I --> J[返回处理后的数据目录]
+    
+    D --> K[使用 source_dir/train 和 source_dir/eval]
+    K --> J
+    
+    J --> L[设置环境变量 DATASET_DIR 和 DATASET_EVAL_DIR]
+    L --> M[执行训练脚本 run_training.sh]
+    M --> N[加载 training_env 配置文件]
+    N --> O[恢复管道设置的环境变量]
+    O --> P[开始模型训练]
+    P --> Q[捕获训练输出]
+    Q --> R[提取最新模型检查点目录]
+    R --> S[执行模型评估]
+    S --> T[训练完成]
+    
+    style A fill:#e1f5fe
+    style T fill:#c8e6c9
+    style C fill:#fff3e0
+    style E fill:#f3e5f5
+    style G fill:#e8f5e8
+    style P fill:#ffebee
+```
+
+### 详细流程说明
+
+#### 1. 数据准备阶段 (`prepare_data`)
 - 检查 `source_dir` 下是否存在 `process.py`
-- 如果存在：调用 `process_data()` 函数获取数据目录
+- 如果存在：调用 `preprocess_data.sh` → Apptainer 容器 → `zenml_preprocess.py` → `process_data()` 函数
 - 如果不存在：使用默认的 `source_dir/train` 和 `source_dir/eval`
 - 返回训练和评估数据目录的元组
 
-### 2. 模型训练阶段 (`train_model`)
+#### 2. 模型训练阶段 (`train_model`)
 - 设置 `DATASET_DIR` 和 `DATASET_EVAL_DIR` 环境变量
 - 执行训练脚本，支持环境变量覆盖保护
 - 捕获训练输出，提取最新的模型检查点目录
 - 返回模型输出目录路径
 
-### 3. 模型评估阶段 (`evaluate_model`)
+#### 3. 模型评估阶段 (`evaluate_model`)
 - 接收训练输出的模型目录
 - 执行模型评估逻辑（待实现）
 - 返回评估结果
+
+### 容器化数据处理流程
+
+```mermaid
+sequenceDiagram
+    participant Z as ZenML Pipeline
+    participant S as preprocess_data.sh
+    participant A as Apptainer Container
+    participant P as zenml_preprocess.py
+    participant M as process.py
+    
+    Z->>S: 调用 preprocess_data.sh /DATA_A/data/qwen_summary/
+    S->>A: apptainer run --bind /DATA_A/data/qwen_summary:/data env/apptainer.sif
+    A->>P: python /data/zenml_preprocess.py /data
+    P->>P: 添加 /data 到 Python 路径
+    P->>M: 导入并调用 process.process_data(/data)
+    M->>M: 处理数据，返回目录路径
+    M->>P: 返回 (train_dir, eval_dir)
+    P->>P: 输出目录路径到标准输出
+    P->>A: 返回处理结果
+    A->>S: 返回容器输出
+    S->>Z: 返回处理后的目录路径
+    Z->>Z: 映射容器路径到主机路径
+    Z->>Z: 继续训练流程
+```
 
 ## 🌐 ZenML 服务配置
 
@@ -238,6 +350,30 @@ python zenml_pipeline.py \
    - 使用其他端口：`ssh -L 8238:localhost:8237 gpuserver@服务器IP`
    - 重启 SSH 连接
 
+6. **Apptainer 容器问题**
+   ```
+   ❌ Apptainer 镜像不存在: env/apptainer.sif
+   ```
+   - 检查镜像文件是否存在：`ls -la env/apptainer.sif`
+   - 确保镜像文件有执行权限
+   - 验证 Apptainer 安装：`apptainer --version`
+
+7. **容器内路径映射问题**
+   ```
+   ⚠️ 无法从输出中提取目录路径，使用默认路径
+   ```
+   - 检查 `zenml_preprocess.py` 是否正确输出目录路径
+   - 验证容器内路径到主机路径的映射
+   - 确保处理后的目录在主机上存在
+
+8. **process.py 导入失败**
+   ```
+   ❌ 导入 process 模块失败
+   ```
+   - 检查 `source_dir/process.py` 是否存在
+   - 验证 `process_data` 函数是否正确定义
+   - 确保函数返回包含两个元素的元组
+
 ### 调试模式
 ```bash
 # 查看详细的环境变量设置过程
@@ -276,12 +412,21 @@ def evaluate_model(output_dir: str):
 
 ## 📚 相关文件
 
-- `zenml_pipeline.py`: 主管道文件
-- `run_training.sh`: 训练执行脚本
-- `training_env`: 环境配置文件
-- `src/train.py`: 训练逻辑
-- `default_config.yaml`: Accelerate 配置
-- `Training_Process.md`: 本文档
+### 核心文件
+- `zenml_pipeline.py`: 主管道文件，定义训练流程
+- `run_training.sh`: 训练执行脚本，支持环境变量管理
+- `training_env`: 环境配置文件，包含训练参数
+- `src/train.py`: 实际训练逻辑
+- `default_config.yaml`: Accelerate 配置文件
+
+### 容器化处理文件
+- `preprocess_data.sh`: 数据预处理脚本，调用 Apptainer 容器
+- `zenml_preprocess.py`: 容器内处理脚本，导入并执行 process.py
+- `env/apptainer.sif`: Apptainer 容器镜像文件
+- `env/apptainer.def`: Apptainer 镜像定义文件
+
+### 文档文件
+- `Training_Process.md`: 本文档，详细使用说明
 
 ---
 
