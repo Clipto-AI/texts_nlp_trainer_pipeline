@@ -1,6 +1,6 @@
 DEEPSPEED_CONFIG_FILE=deepspeed_config_zero2.json
 # --- Weights & Biases ---
-WANDB_API_KEY=d2e313b0804ea6b3f3272dcfd0f331b044b565a4
+WANDB_API_KEY=
 WANDB_PROJECT=ft0
 WANDB_RUN_NAME=ft0-run-0
 
