@@ -153,6 +153,9 @@ def compute_loss(outputs,
     
     return loss
 
+def default_compute_loss_func(outputs, labels, num_items_in_batch):
+    return torch.nn.functional.cross_entropy(outputs.logits.view(-1, outputs.logits.shape[-1]), labels.view(-1),ignore_index=-100)
+
 def create_compute_loss_func(eos_token_id):
     """创建带有eos_token_id的compute_loss函数"""
     def compute_loss_with_eos(outputs, labels, num_items_in_batch):
@@ -307,8 +310,8 @@ def main():
         train_dataset=tokenized_ds,
         eval_dataset=tokenized_ds_eval,
         data_collator=partial(data_collator,eos_token_id=tokenizer.eos_token_id,pad_token_id=tokenizer.pad_token_id,total_max_length=args.total_max_length),
-        compute_loss_func=create_compute_loss_func(tokenizer.eos_token_id),
-
+        # compute_loss_func=create_compute_loss_func(tokenizer.eos_token_id),
+        compute_loss_func=default_compute_loss_func,
     )
     print(trainer)
     # 确保模型在训练前正确设置
