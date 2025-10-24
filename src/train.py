@@ -156,8 +156,8 @@ def compute_loss(outputs,
     return loss
 
 def default_compute_loss_func(outputs, labels, num_items_in_batch):
-    logits = outputs.logits[:,:-1,:]
-    labels = labels[:,1:]
+    logits = outputs.logits[:,:-1,:].contiguous()
+    labels = labels[:,1:].contiguous()
     return torch.nn.functional.cross_entropy(logits.view(-1, logits.shape[-1]), labels.view(-1),ignore_index=-100)
 
 def create_compute_loss_func(eos_token_id):
