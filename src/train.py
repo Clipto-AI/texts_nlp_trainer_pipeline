@@ -79,6 +79,8 @@ def compute_loss(outputs,
             ):
     logits = outputs.logits  # shape: (B, T, V)
     B, T, V = logits.shape
+    logits = outputs.logits[:,:-1,:]
+    labels = labels[:,1:]
     
     if eos_token_id is None:
         eos_token_id = 2  # 默认值，如果未提供
@@ -156,7 +158,7 @@ def compute_loss(outputs,
 def default_compute_loss_func(outputs, labels, num_items_in_batch):
     logits = outputs.logits[:,:-1,:]
     labels = labels[:,1:]
-    return torch.nn.functional.cross_entropy(logits.view(-1, outputs.logits.shape[-1]), labels.view(-1),ignore_index=-100)
+    return torch.nn.functional.cross_entropy(logits.view(-1, logits.shape[-1]), labels.view(-1),ignore_index=-100)
 
 def create_compute_loss_func(eos_token_id):
     """创建带有eos_token_id的compute_loss函数"""
