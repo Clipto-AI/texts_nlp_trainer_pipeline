@@ -35,8 +35,8 @@ def data_collator(examples,eos_token_id,pad_token_id,total_max_length):
     for example in examples:
         original_input_ids = example['input_ids']
         original_output_ids = example['labels']
-        input_ids = original_input_ids+original_output_ids
-        labels = [-100]*(len(original_input_ids)-1)+original_output_ids+[eos_token_id]
+        input_ids = original_input_ids+original_output_ids+[eos_token_id]
+        labels = [-100]*len(original_input_ids)+original_output_ids+[eos_token_id]
         attention_mask = [1]*len(input_ids)
         input_ids_all.append(torch.tensor(input_ids, dtype=torch.long))
         labels_all.append(torch.tensor(labels, dtype=torch.long))
@@ -154,7 +154,9 @@ def compute_loss(outputs,
     return loss
 
 def default_compute_loss_func(outputs, labels, num_items_in_batch):
-    return torch.nn.functional.cross_entropy(outputs.logits.view(-1, outputs.logits.shape[-1]), labels.view(-1),ignore_index=-100)
+    logits = outputs.logits[:,:-1,:]
+    labels = labels[:,1:]
+    return torch.nn.functional.cross_entropy(logits.view(-1, outputs.logits.shape[-1]), labels.view(-1),ignore_index=-100)
 
 def create_compute_loss_func(eos_token_id):
     """创建带有eos_token_id的compute_loss函数"""
