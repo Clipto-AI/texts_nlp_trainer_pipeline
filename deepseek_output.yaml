@@ -1,0 +1,42 @@
+# ==============================================================================
+# --- 配置中心 (config.yaml) ---
+# 你可以在这里修改所有参数，而无需改动 process_data.py 文件。
+# ==============================================================================
+
+# --- 文件路径配置 ---
+paths:
+  input_file: "/data/asr_content.jsonl"
+  output_file: "/data/deepseek_brief_summary.jsonl"
+
+# --- API 配置 ---
+api_settings:
+  # 你的 DeepSeek API 密钥
+  key: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"  # 请替换为你的真实API Key
+  # API 的基础 URL
+  base_url: "https://api.deepseek.com"
+
+# --- 模型与任务配置 ---
+model_parameters:
+  # 要使用的模型名称
+  name: "deepseek-reasoner"
+  # 系统提示 (System Prompt)，用于指导模型的行为
+  # 使用 | 符号可以方便地输入多行文本
+  system_prompt: |
+    You are a careful and professional summarizer, and you are skilled at providing a concise and clear summary for quickly grasping key points.
+    <output format requirement>
+    the output should be a single natural language sentence, and it should follow a general-to-specific structure.
+    </output format requirement>
+  
+  # Chat Completions API 的其他参数
+  temperature: 0.6
+  top_p: 0.95
+  extra_body: 
+    enable_thinking: true
+
+# --- 性能与稳定性配置 ---
+performance:
+  # 并发线程数 (请根据您的网络和API速率限制调整)
+  # 注意：200是一个很高的值，请确保您的系统和API账户可以承受。建议从10或20开始。
+  max_workers: 200
+  # API调用失败后的重试次数
+  max_retries: 3
