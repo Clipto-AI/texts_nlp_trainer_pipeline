@@ -465,7 +465,24 @@ def build_schema_maps(schema_json, start_entity_code='A', start_attr_code='a', s
     for rel, code in zip(all_rels, rel_codes):
         relation_map[rel] = code
 
-    return {"entity_map": entity_map, "attr_map": attr_map, "relation_map": relation_map}
+    # === 构建属性代码正则表达式模式（用于解析 STTL） ===
+    attr_codes = list(attr_map.values())
+    # 按长度降序排序，确保较长的代码（如 'aa'）优先匹配
+    attr_codes.sort(key=len, reverse=True)
+    # 转义特殊字符并构建正则表达式模式
+    attr_pattern = "|".join(re.escape(code) for code in attr_codes)
+    # 编译正则表达式模式: \b(属性代码)=([^;]*);?
+    # 使用单词边界 \b 确保属性代码的完整匹配
+    # 使用 [^;]* 匹配不包含分号的任意字符
+    # 使用 ;? 匹配可选的分号
+    attr_regex_pattern = rf"\b({attr_pattern})=([^;]*);?"
+
+    return {
+        "entity_map": entity_map,
+        "attr_map": attr_map,
+        "relation_map": relation_map,
+        "attr_regex_pattern": attr_regex_pattern
+    }
 
 
 # ==================================================
@@ -485,12 +502,21 @@ def flatten_dict(d, prefix=""):
     return flat
 
 
-def convert_json_2_sttl(kg, schema_json, calc_ratio=False):
+def convert_json_2_sttl(kg, maps=None, schema_json=None, calc_ratio=False):
     """
     压缩知识图谱为 Schema-Aware Turtle (STTL)
     - 用 Schema 缩写实体类型、属性名和关系名
+    
+    Args:
+        kg: 知识图谱 JSON 对象
+        maps: 已构建的 schema maps（优先使用，避免重复构建）
+        schema_json: Schema JSON 对象（如果 maps 为 None 则使用此参数构建 maps）
+        calc_ratio: 是否计算压缩比
     """
-    maps = build_schema_maps(schema_json)
+    if maps is None:
+        if schema_json is None:
+            raise ValueError("必须提供 maps 或 schema_json 参数")
+        maps = build_schema_maps(schema_json)
     Emap, Amap, Rmap = maps["entity_map"], maps["attr_map"], maps["relation_map"]
 
     lines = []
@@ -540,10 +566,22 @@ def convert_json_2_sttl(kg, schema_json, calc_ratio=False):
 # ==================================================
 # 3️⃣ STTL → JSON
 # ==================================================
-def convert_sttl_2_json(sttl_text, schema_json):
-    """从 STTL 反解析回标准 JSON"""
-    maps = build_schema_maps(schema_json)
+def convert_sttl_2_json(sttl_text, maps=None, schema_json=None):
+    """
+    从 STTL 反解析回标准 JSON
+    
+    Args:
+        sttl_text: STTL 格式的字符串
+        maps: 已构建的 schema maps（优先使用，避免重复构建）
+        schema_json: Schema JSON 对象（如果 maps 为 None 则使用此参数构建 maps）
+    """
+    if maps is None:
+        if schema_json is None:
+            raise ValueError("必须提供 maps 或 schema_json 参数")
+        maps = build_schema_maps(schema_json)
+    
     Emap, Amap, Rmap = maps["entity_map"], maps["attr_map"], maps["relation_map"]
+    attr_regex_pattern = maps["attr_regex_pattern"]
     rev_E = {v: k for k, v in Emap.items()}
     rev_A = {v: k for k, v in Amap.items()}
     rev_R = {v: k for k, v in Rmap.items()}
@@ -571,12 +609,17 @@ def convert_sttl_2_json(sttl_text, schema_json):
 
             attrs = {}
             if attr_part:
-                for pair in attr_part.split(";"):
-                    if "=" in pair:
-                        k, v = pair.split("=", 1)
-                        key_name = rev_A.get(k.strip(), None)
-                        if key_name:
-                            attrs[key_name] = v.strip()
+                # 使用预构建的正则表达式解析属性
+                # 检查字符串结尾是否有分号，如果没有就添加一个
+                if not attr_part.endswith(';'):
+                    attr_part = attr_part + ';'
+                
+                # 使用 re.findall 找到所有匹配
+                matches = re.findall(attr_regex_pattern, attr_part)
+                for k, v in matches:
+                    key_name = rev_A.get(k, None)
+                    if key_name:
+                        attrs[key_name] = v
             kg["Entity_types"][ent_name] = ent_type
             kg["Attributes"][ent_name] = attrs
 
@@ -627,14 +670,20 @@ if __name__ == "__main__":
     }
 
     # === 压缩为 STTL ===
+    # 方式1: 使用已构建的 maps（推荐，可复用）
     from pprint import pprint
-    sttl, stats = convert_json_2_sttl(kg, schema_definition, calc_ratio=True)
+    sttl, stats = convert_json_2_sttl(kg, maps=schema_maps, calc_ratio=True)
     print("=== STTL ===")
     print(sttl)
     print("\n=== Compression Stats ===")
     pprint(stats)
 
     # === 还原为 JSON ===
-    restored = convert_sttl_2_json(sttl, schema_definition)
+    # 复用已构建的 maps，避免重复构建
+    restored = convert_sttl_2_json(sttl, maps=schema_maps)
     print("\n=== Restored JSON ===")
     print(json.dumps(restored, indent=2, ensure_ascii=False))
+    
+    # 方式2: 直接传入 schema_json（兼容旧代码，但会重复构建 maps）
+    # sttl, stats = convert_json_2_sttl(kg, schema_json=schema_definition, calc_ratio=True)
+    # restored = convert_sttl_2_json(sttl, schema_json=schema_definition)
