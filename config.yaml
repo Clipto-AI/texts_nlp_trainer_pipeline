@@ -1,0 +1,57 @@
+# ===================================================================
+# STAGE CONTROL: 控制执行哪个阶段
+# ===================================================================
+stages:
+  # 是否执行下载阶段：从 S3 下载 BSON 并转为 JSONL
+  run_download: true
+  # 是否执行处理阶段：将下载的 JSONL 合并为单个大文件
+  run_process: true
+
+# ===================================================================
+# AWS S3 & DOWNLOAD STAGE CONFIG
+# ===================================================================
+download_stage:
+  aws:
+    access_key: ""
+    secret_key: ""
+    bucket_name: "clipto-web"
+    region: "us-west-2"
+  
+  source:
+    # 从 Excel 文件中读取的列名
+    column_name: "transcription_url"
+    # 要处理的最大行数 (-1 表示处理所有行)
+    rows_to_process: 10
+  
+  # 生成预签名URL的有效期（分钟）
+  url_expires_in_minutes: 144000
+
+# ===================================================================
+# PROCESSING STAGE CONFIG
+# ===================================================================
+process_stage:
+  placeholder: "Settings for processing stage" # YAML要求节点下有内容，这里用一个占位符
+
+# ===================================================================
+# PERFORMANCE CONFIG (for both stages)
+# ===================================================================
+performance:
+  # [下载阶段] 生成预签名URL的并发线程数
+  url_gen_workers: 10
+  # [下载阶段] 下载和转换文件的并发线程数
+  download_workers: 10
+  # [处理阶段] 合并 JSONL 文件时的并发线程数
+  processing_workers: 16
+
+# ===================================================================
+# PATHS CONFIG (shared across stages)
+# ===================================================================
+paths:
+  # [下载阶段] 输入的 Excel 文件路径
+  excel_file: "input_data/combined_data_1110_2.xlsx"
+  # [下载阶段] 下载文件的目标目录 (同时也是处理阶段的输入目录)
+  download_dir: "downloads_output"
+  # [下载阶段] 记录失败任务的日志文件
+  download_failed_log: "failed_jobs.log"
+  # [处理阶段] 最终合并后输出的 JSONL 文件路径
+  final_output_file: "asr_content_1111.jsonl"
